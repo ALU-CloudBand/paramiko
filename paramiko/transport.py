@@ -46,6 +46,7 @@ from paramiko.common import xffffffff, cMSG_CHANNEL_OPEN, cMSG_IGNORE, \
 from paramiko.compress import ZlibCompressor, ZlibDecompressor
 from paramiko.dsskey import DSSKey
 from paramiko.kex_gex import KexGex
+from paramiko.kex_gex_sha256 import KexGexSHA256
 from paramiko.kex_group1 import KexGroup1
 from paramiko.message import Message
 from paramiko.packet import Packetizer, NeedRekeyException
@@ -93,7 +94,9 @@ class Transport (threading.Thread):
     _preferred_macs = ('hmac-sha2-256', 'hmac-sha1', 'hmac-md5',
                        'hmac-sha2-256-96', 'hmac-sha1-96', 'hmac-md5-96')
     _preferred_keys = ('ssh-rsa', 'ssh-dss', 'ecdsa-sha2-nistp256')
-    _preferred_kex = ('diffie-hellman-group1-sha1', 'diffie-hellman-group-exchange-sha1')
+    _preferred_kex = ('diffie-hellman-group1-sha1',
+	                  'diffie-hellman-group-exchange-sha1',
+	                  'diffie-hellman-group-exchange-sha256')
     _preferred_compression = ('none',)
 
     _cipher_info = {
@@ -125,6 +128,7 @@ class Transport (threading.Thread):
     _kex_info = {
         'diffie-hellman-group1-sha1': KexGroup1,
         'diffie-hellman-group-exchange-sha1': KexGex,
+        'diffie-hellman-group-exchange-sha256': KexGexSHA256,
     }
 
     _compression_info = {
@@ -1339,13 +1343,15 @@ class Transport (threading.Thread):
         m.add_bytes(self.H)
         m.add_byte(b(id))
         m.add_bytes(self.session_id)
-        out = sofar = sha1(m.asbytes()).digest()
+        # was sha1
+        hash_algo = self._mac_info[self.local_mac]['class']
+        out = sofar = hash_algo(m.asbytes()).digest()
         while len(out) < nbytes:
             m = Message()
             m.add_mpint(self.K)
             m.add_bytes(self.H)
             m.add_bytes(sofar)
-            digest = sha1(m.asbytes()).digest()
+            digest = hash_algo(m.asbytes()).digest()
             out += digest
             sofar += digest
         return out[:nbytes]
@@ -1579,6 +1585,11 @@ class Transport (threading.Thread):
                 # can't do group-exchange if we don't have a pack of potential primes
                 pkex = list(self.get_security_options().kex)
                 pkex.remove('diffie-hellman-group-exchange-sha1')
+                self.get_security_options().kex = pkex
+            elif (self._modulus_pack is None) and ('diffie-hellman-group-exchange-sha256' in self._preferred_kex):
+                # can't do group-exchange if we don't have a pack of potential primes
+                pkex = list(self.get_security_options().kex)
+                pkex.remove('diffie-hellman-group-exchange-sha256')
                 self.get_security_options().kex = pkex
             available_server_keys = list(filter(list(self.server_key_dict.keys()).__contains__,
                                                 self._preferred_keys))
